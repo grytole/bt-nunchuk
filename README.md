@@ -7,6 +7,8 @@ Bluetooth controller based on Wii Nunchuk, Arduino and HM10-like Bluetooth modul
 
 ![HW scheme](doc/bt-nunchuck-hw-scheme.png)
 
+---
+
 #### Bill of materials
  - CJMCU CP2012 USB-Serial converter;
  - TP4056 LiPo charger;
