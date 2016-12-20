@@ -15,4 +15,7 @@ Bluetooth controller based on Wii Nunchuk, Arduino and HM10-like Bluetooth modul
  - LiPo battery;
  - Arduino Pro Mini 3.3V;
  - HM-10 Bluetooth module (or clone);
+ - LED;
+ - 1k resistor;
+ - 10k resistor;
  - Wii Nunchuk.
