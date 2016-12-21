@@ -1,5 +1,6 @@
 #define uartBaudrate 19200
 #define statusLedPin 3
+#define lowVoltageThreshold 3300
 
 long readVcc()
 {
@@ -43,7 +44,7 @@ void loop() {
   Serial.print(vcc, DEC);
   Serial.print(" mV\n");
 
-  if( vcc < 3200)
+  if(vcc < lowVoltageThreshold)
   {
     blink();
   }
