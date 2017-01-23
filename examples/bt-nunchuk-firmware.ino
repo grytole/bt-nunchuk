@@ -238,6 +238,7 @@ void loopStandby( void )
   if( hasUnchangedData )
   {
     nunchukPowerOff();
+    LowPower.powerDown( SLEEP_500MS, ADC_OFF, BOD_OFF );
   }
   else
   {
@@ -277,6 +278,8 @@ void setup( void )
   pinMode( pinExternalPower, INPUT );
   pinMode( pinStatusLed, OUTPUT );
   pinMode( pinNunchukEnable, OUTPUT );
+
+  gotoActive();
 }
 
 void loop( void )
