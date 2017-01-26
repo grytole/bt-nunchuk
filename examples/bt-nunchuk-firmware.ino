@@ -12,38 +12,68 @@
 #define atUartBaudrate 9600
 #define nunchukI2cAddress 0x52
 #define voltageBatteryLowThreshold 3300
-#define sleepThreshold 10
+#define sleepThreshold 1333 // 60s @ 45ms
+//#define sleepThreshold 66 // 3s @ 45ms
 #define nunchukPacketSize 6
 #define atResponseSize 256
 
 static uint8_t nunchukPacket[ nunchukPacketSize ];
-static uint8_t atResponse[ atResponseSize ];
-static bool isActive = true;
+static char atResponse[ atResponseSize ];
+static bool isActive = false;
 
 SoftwareSerial atSerial( pinBtUartRx, pinBtUartTx );
 
 // ------------------------------------------------------------------- Bluetooth
 
-void bluetoothSleep( void )
+bool bluetoothSleep( void )
 {
   atSerial.print( "AT+SLEEP" );
   atSerial.flush();
+  delay(2);
+  if( bluetoothCheckResponse( "OK+SLEEP" ) )
+  {
+      //Serial.println( "BtSleep: OK" ); Serial.flush();
+      return true;
+  }
+  return false;
 }
 
 void bluetoothWakeup( void )
 {
   uint8_t i;
-
-  for( i = 0; i < 100; i++ )
+  for( i = 0; i < 255; i++ )
   {
-    atSerial.write( i );
+    atSerial.write( 'x' );
   }
   atSerial.flush();
+  delay(2);
+  if( bluetoothCheckResponse( "OK+WAKE" ) )
+  {
+    //Serial.println( "BtWakeup: OK" ); Serial.flush();
+    return true;
+  }
+  return false;
+}
+
+bool bluetoothDummy( void )
+{
+  atSerial.print( "AT" );
+  atSerial.flush();
+  delay(2);
+  if( bluetoothCheckResponse( "OK" ) )
+  {
+    //Serial.println( "BtDummy: OK" ); Serial.flush();
+    return true;
+  }
+  //Serial.println( "BtDummy: ERR" ); Serial.flush();
+  return false;
 }
 
 void bluetoothSendNunchukPacket( void )
 {
   uint8_t i;
+
+  //Serial.println( "BtSend" ); Serial.flush();
   
   for( i = 0; i < nunchukPacketSize; i++ )
   {
@@ -55,20 +85,36 @@ void bluetoothSendNunchukPacket( void )
 uint8_t bluetoothGetResponse( void )
 {
   uint8_t responseLength;
+
+  //Serial.println( "BtResp" ); Serial.flush();
   
   for( responseLength = 0; atSerial.available() > 0 && responseLength < atResponseSize - 1; responseLength++ )
   {
-    atResponse[ responseLength ] = Serial.read();
+    atResponse[ responseLength ] = atSerial.read();
   }
   atResponse[ responseLength ] = 0;
   
   return responseLength;
 }
 
+bool bluetoothCheckResponse( const char *response )
+{
+  if( strlen( response ) == bluetoothGetResponse() )
+  {
+    if( 0 == strcmp( atResponse, response ) )
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ------------------------------------------------------------------- Nunchuk
 
 void nunchukPowerOn( void )
 {
+  //Serial.println( "JoyOn" ); Serial.flush();
+  
   digitalWrite( pinNunchukEnable, HIGH );
 }
 
@@ -76,13 +122,26 @@ void nunchukInit( void )
 {
   uint8_t i = 0;
   
+  //Serial.println( "JoyInit" ); Serial.flush();
+  
   Wire.beginTransmission( nunchukI2cAddress );
   Wire.write( 0xF0 );
   Wire.write( 0x55 );
   Wire.write( 0xFB );
-  Wire.write( 0x00 );
   Wire.endTransmission();
 
+  //LowPower.powerDown( SLEEP_15MS, ADC_OFF, BOD_OFF );
+  delay(2);
+
+  Wire.beginTransmission( nunchukI2cAddress );
+  Wire.write( 0x00 );
+  Wire.endTransmission();
+}
+
+void nunchukClearBuffer( void )
+{
+  uint8_t i = 0;
+  
   while( i < nunchukPacketSize )
   {
     nunchukPacket[ i++ ] = 0x00;
@@ -92,29 +151,56 @@ void nunchukInit( void )
 bool nunchukUpdate( void )
 {
   uint8_t i = 0;
+  bool changed = false;
   static uint16_t unchangedCnt = 0;
+  
+  //Serial.println( "JoyUpdate" );
   
   Wire.requestFrom( nunchukI2cAddress, nunchukPacketSize );
   while( Wire.available() )
   {
     uint8_t val = Wire.read();
+
     if( ( ( i == 0 || i == 1 ) && ( val != nunchukPacket[ i ] ) ) ||
         ( ( i == 5 ) && ( ( val & 0x03 ) != ( nunchukPacket[ i ] & 0x03 ) ) ) )
     {
-      unchangedCnt = 0;
+      changed = true;
     }
-    else if( unchangedCnt < sleepThreshold )
+    
+    //Serial.print( changed?"(!) ":"(=) " ); Serial.print( "   [ " ); Serial.print( i, DEC ); Serial.print( " ] = " ); Serial.println( val & ((i == 5)?0x03:0xff), HEX ); Serial.flush();
+    
+    nunchukPacket[ i++ ] = val;
+  }
+
+  if( false == changed )
+  {
+    if( unchangedCnt < sleepThreshold )
     {
       unchangedCnt += 1;
     }
-    nunchukPacket[ i++ ] = val;
   }
-  
+  else
+  {
+    unchangedCnt = 0;
+  }
+
+  //Serial.print( "JoyUpdate / unchangedCnt: " ); Serial.println( unchangedCnt, DEC ); Serial.flush();
+
+  //LowPower.powerDown( SLEEP_15MS, ADC_OFF, BOD_OFF );
+  delay(2);
+
   Wire.beginTransmission( nunchukI2cAddress );
   Wire.write( 0x00 );
   Wire.endTransmission();
 
-  return ( unchangedCnt == sleepThreshold );
+  if( isActive )
+  {
+    return ( unchangedCnt == sleepThreshold );
+  }
+  else
+  {
+    return ( 0 != unchangedCnt );
+  }
 }
 
 int8_t nunchukGetJoyX( void )
@@ -154,6 +240,8 @@ bool nunchukIsPressedKeyC( void )
 
 void nunchukPowerOff( void )
 {
+  //Serial.println( "JoyOff" ); Serial.flush();
+  
   digitalWrite( pinNunchukEnable, LOW );
 }
 
@@ -217,27 +305,41 @@ bool voltageIsCritical( void )
 void loopActive( void )
 {
   bool timedOut = nunchukUpdate();
+
+  //Serial.print( "************** LoopActive" ); Serial.println( timedOut?": TIMEDOUT":""); Serial.flush();
+  
   if( timedOut )
   {
     gotoStandby();
   }
   else
   {
-    ledBlink();
+    //ledBlink();
     bluetoothSendNunchukPacket();
-    LowPower.powerDown( SLEEP_500MS, ADC_OFF, BOD_OFF );
+    LowPower.powerDown( SLEEP_30MS, ADC_OFF, BOD_OFF );
   }
 }
 
 void loopStandby( void )
 {
-  bool hasUnchangedData = false;
+  bool timedOut = false;
+
   nunchukPowerOn();
   LowPower.powerDown( SLEEP_60MS, ADC_OFF, BOD_OFF );
-  hasUnchangedData = nunchukUpdate();
-  if( hasUnchangedData )
+  nunchukInit();
+  //LowPower.powerDown( SLEEP_120MS, ADC_OFF, BOD_OFF );
+
+  //dummy updates
+  nunchukUpdate();
+  nunchukUpdate();
+  
+  timedOut = nunchukUpdate();
+  nunchukPowerOff();
+
+  //Serial.print( "************** LoopStandby" ); Serial.println( timedOut?" :TIMEDOUT":""); Serial.flush();
+  
+  if( timedOut )
   {
-    nunchukPowerOff();
     LowPower.powerDown( SLEEP_500MS, ADC_OFF, BOD_OFF );
   }
   else
@@ -249,21 +351,54 @@ void loopStandby( void )
 void gotoActive( void )
 {
   uint8_t i;
+  
+  //Serial.println( "@@@@@@@@@@@@@@@@ gotoActive" ); Serial.flush();
 
-  bluetoothWakeup();
-  nunchukPowerOn();
-  for( i = 0; i < 4; i++ )
-  {
+  //for( i = 0; i < 16; i++ )
+  //{
     ledBlink();
+  //  LowPower.powerDown( SLEEP_60MS, ADC_OFF, BOD_OFF );
+  //}
+
+  nunchukPowerOn();
+  
+  for( i = 10; i > 0; i-- )
+  {
+    bluetoothWakeup();
     LowPower.powerDown( SLEEP_250MS, ADC_OFF, BOD_OFF );
+    if( ( 0 == i ) && ( false == bluetoothDummy() ) )
+    {
+      return;
+    }
+    
+    if( true == bluetoothDummy() )
+    {
+      break;
+    }
   }
+  
+  nunchukInit();
+  
+  //dummy updates
+  nunchukUpdate();
+  nunchukUpdate();
+  
   isActive = true;
 }
 
 void gotoStandby( void )
 {
+  uint8_t i;
+
+  //Serial.println( "@@@@@@@@@@@@@@@@ gotoStandby" ); Serial.flush();
+  
   bluetoothSleep();
   nunchukPowerOff();
+  //for( i = 0; i < 16; i++ )
+  //{
+    ledBlink();
+  //  LowPower.powerDown( SLEEP_60MS, ADC_OFF, BOD_OFF );
+  //}
   isActive = false;
 }
 
@@ -279,18 +414,22 @@ void setup( void )
   pinMode( pinStatusLed, OUTPUT );
   pinMode( pinNunchukEnable, OUTPUT );
 
+  nunchukClearBuffer();
+
+  LowPower.powerDown( SLEEP_1S, ADC_OFF, BOD_OFF );
+  
   gotoActive();
 }
 
 void loop( void )
 {
-  if( externalIsConnected() )
-  {
-    ledOn();
-  }
-  else
-  {
-    ledOff();
+//  if( externalIsConnected() )
+//  {
+//    ledOn();
+//  }
+//  else
+//  {
+//    ledOff();
     
     if( isActive )
     {
@@ -300,5 +439,5 @@ void loop( void )
     {
       loopStandby();
     }
-  }
+//  }
 }
